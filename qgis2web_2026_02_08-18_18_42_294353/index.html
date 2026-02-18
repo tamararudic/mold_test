@@ -1,0 +1,1194 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="initial-scale=1,user-scalable=no,maximum-scale=1,width=device-width">
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <link rel="stylesheet" href="css/leaflet.css">
+        <link rel="stylesheet" href="css/L.Control.Layers.Tree.css">
+        <link rel="stylesheet" href="css/L.Control.Locate.min.css">
+        <link rel="stylesheet" href="css/qgis2web.css">
+        <link rel="stylesheet" href="css/fontawesome-all.min.css">
+        <link rel="stylesheet" href="css/search_box.css">
+        <style>
+        html, body, #map {
+            width: 100%;
+            height: 100%;
+            padding: 0;
+            margin: 0;
+        }
+        #sidebar {
+          position: absolute;
+          width: 30%;
+          height: 100%;
+          left: 0;
+          top: 0;
+          background-color: rgba(255, 255, 255, 0.8);
+        }
+        .sidebarElement {
+          padding: 6px;
+          display: table;
+          width: 95%;
+        }
+        .infoSidebarElement {
+          display: table-cell;
+          cursor: pointer;
+          width: 90%;
+        }
+        .removeSidebarElement {    
+          display: table-cell;
+          text-align: right;
+          cursor: pointer;
+        }
+        </style>
+        <title>Mold Contamination in Baltimore</title>
+    </head>
+    <body>
+        <div class="search-box">
+            <input type="text" id="address-search" placeholder="Address or place in Baltimore County…" autocomplete="off">
+            <button type="button" id="address-search-btn">Go</button>
+        </div>
+        <div id="map"></div>
+        <span class="search-message" id="search-message" aria-live="polite"></span>
+        <script src="js/qgis2web_expressions.js"></script>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+        <script src="js/leaflet.js"></script>
+        <script src="js/L.Control.Layers.Tree.min.js"></script>
+        <script src="js/L.Control.Locate.min.js"></script>
+        <script src="js/leaflet-svg-shape-markers.min.js"></script>
+        <script src="js/leaflet.rotatedMarker.js"></script>
+        <script src="js/leaflet.pattern.js"></script>
+        <script src="js/leaflet-hash.js"></script>
+        <script src="js/Autolinker.min.js"></script>
+        <script src="js/rbush.min.js"></script>
+        <script src="js/labelgun.min.js"></script>
+        <script src="js/labels.js"></script>
+        <script src="js/address_search.js"></script>
+        <script src="data/NumberofUnitswithDangerousDetections_2.js"></script>
+        <script src="data/NumberofUnitsTested_3.js"></script>
+        <script src="data/NumberofUnitsReportingMold_4.js"></script>
+        <script src="data/mappinginequality_5.js"></script>
+        <script src="data/MoldContaminationCaseStudies_6.js"></script>
+        <script>
+        var highlightLayer;
+        function highlightFeature(e) {
+            highlightLayer = e.target;
+
+            if (e.target.feature.geometry.type === 'LineString' || e.target.feature.geometry.type === 'MultiLineString') {
+              highlightLayer.setStyle({
+                color: 'rgba(255, 255, 0, 1.00)',
+              });
+            } else {
+              highlightLayer.setStyle({
+                fillColor: 'rgba(255, 255, 0, 1.00)',
+                fillOpacity: 1
+              });
+            }
+            highlightLayer.openPopup();
+            this._popup.options.autoPan = false;
+        }
+        var map = L.map('map', {
+            zoomControl:false, maxZoom:18, minZoom:12
+        }).fitBounds([[39.19437851918978,-76.8027903694522],[39.40854022047975,-76.44554246599034]]);
+        var hash = new L.Hash(map);
+        map.attributionControl.setPrefix('<a href="https://github.com/tomchadwin/qgis2web" target="_blank">qgis2web</a> &middot; <a href="https://leafletjs.com" title="A JS library for interactive maps">Leaflet</a> &middot; <a href="https://qgis.org">QGIS</a>');
+        var autolinker = new Autolinker({truncate: {length: 30, location: 'smart'}});
+        // remove popup's row if "visible-with-data"
+        function removeEmptyRowsFromPopupContent(content, feature) {
+         var tempDiv = document.createElement('div');
+         tempDiv.innerHTML = content;
+         var rows = tempDiv.querySelectorAll('tr');
+         for (var i = 0; i < rows.length; i++) {
+             var td = rows[i].querySelector('td.visible-with-data');
+             var key = td ? td.id : '';
+             if (td && td.classList.contains('visible-with-data') && feature.properties[key] == null) {
+                 rows[i].parentNode.removeChild(rows[i]);
+             }
+         }
+         return tempDiv.innerHTML;
+        }
+        // modify popup if contains media
+        function addClassToPopupIfMedia(content, popup) {
+            var tempDiv = document.createElement('div');
+            tempDiv.innerHTML = content;
+            var imgTd = tempDiv.querySelector('td img');
+            if (imgTd) {
+                var src = imgTd.getAttribute('src');
+                if (/\.(jpg|jpeg|png|gif|bmp|webp|avif)$/i.test(src)) {
+                    popup._contentNode.classList.add('media');
+                    setTimeout(function() {
+                        popup.update();
+                    }, 10);
+                } else if (/\.(mp3|wav|ogg|aac)$/i.test(src)) {
+                    var audio = document.createElement('audio');
+                    audio.controls = true;
+                    audio.src = src;
+                    imgTd.parentNode.replaceChild(audio, imgTd);
+                    popup._contentNode.classList.add('media');
+                    setTimeout(function() {
+                        popup.setContent(tempDiv.innerHTML);
+                        popup.update();
+                    }, 10);
+                } else if (/\.(mp4|webm|ogg|mov)$/i.test(src)) {
+                    var video = document.createElement('video');
+                    video.controls = true;
+                    video.src = src;
+                    video.style.width = "400px";
+                    video.style.height = "300px";
+                    video.style.maxHeight = "60vh";
+                    video.style.maxWidth = "60vw";
+                    imgTd.parentNode.replaceChild(video, imgTd);
+                    popup._contentNode.classList.add('media');
+                    // Aggiorna il popup quando il video carica i metadati
+                    video.addEventListener('loadedmetadata', function() {
+                        popup.update();
+                    });
+                    setTimeout(function() {
+                        popup.setContent(tempDiv.innerHTML);
+                        popup.update();
+                    }, 10);
+                } else {
+                    popup._contentNode.classList.remove('media');
+                }
+            } else {
+                popup._contentNode.classList.remove('media');
+            }
+        }
+        var title = new L.Control({'position':'topleft'});
+        title.onAdd = function (map) {
+            this._div = L.DomUtil.create('div', 'info');
+            this.update();
+            return this._div;
+        };
+        title.update = function () {
+            this._div.innerHTML = '<h2>Mold Contamination in Baltimore</h2>';
+        };
+        title.addTo(map);
+        var abstract = new L.Control({'position':'topleft'});
+        abstract.onAdd = function (map) {
+            this._div = L.DomUtil.create('div',
+            'leaflet-control abstract');
+            this._div.id = 'abstract'
+
+                abstract.show();
+                return this._div;
+            };
+            abstract.show = function () {
+                this._div.classList.remove("abstract");
+                this._div.classList.add("abstractUncollapsed");
+                this._div.innerHTML = 'Baltimore Renters United,  the Ujima People\'s Progress Party,  and Science for the People created this map to expose how widespread mold contamination in rental housing in Baltimore is. ';
+        };
+        abstract.addTo(map);
+        var zoomControl = L.control.zoom({
+            position: 'topleft'
+        }).addTo(map);
+        L.control.locate({locateOptions: {maxZoom: 19}}).addTo(map);
+        var bounds_group = new L.featureGroup([]);
+        function setBounds() {
+            map.setMaxBounds(map.getBounds());
+            map.setMinZoom(map.getZoom());
+        }
+        map.createPane('pane_OpenStreetMap_0');
+        map.getPane('pane_OpenStreetMap_0').style.zIndex = 400;
+        var layer_OpenStreetMap_0 = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            pane: 'pane_OpenStreetMap_0',
+            opacity: 1.0,
+            attribution: '',
+            minZoom: 10,
+            maxZoom: 18,
+            minNativeZoom: 0,
+            maxNativeZoom: 19
+        });
+        layer_OpenStreetMap_0;
+        map.createPane('pane_CartoDark_1');
+        map.getPane('pane_CartoDark_1').style.zIndex = 401;
+        var layer_CartoDark_1 = L.tileLayer('https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+            pane: 'pane_CartoDark_1',
+            opacity: 1.0,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            minZoom: 11,
+            maxZoom: 18,
+        });
+        layer_CartoDark_1;
+        map.addLayer(layer_CartoDark_1);
+        function pop_NumberofUnitswithDangerousDetections_2(feature, layer) {
+            layer.on({
+                mouseout: function(e) {
+                    for (var i in e.target._eventParents) {
+                        if (typeof e.target._eventParents[i].resetStyle === 'function') {
+                            e.target._eventParents[i].resetStyle(e.target);
+                        }
+                    }
+                    if (typeof layer.closePopup == 'function') {
+                        layer.closePopup();
+                    } else {
+                        layer.eachLayer(function(feature){
+                            feature.closePopup()
+                        });
+                    }
+                },
+                mouseover: highlightFeature,
+            });
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Number of Units Reporting Mold Contamination</th>\
+                        <td>' + (feature.properties['Number of Units Reporting Mold'] !== null ? autolinker.link(String(feature.properties['Number of Units Reporting Mold']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Number of Reported Units that have been Tested</th>\
+                        <td>' + (feature.properties['Number of Reported Units Tested'] !== null ? autolinker.link(String(feature.properties['Number of Reported Units Tested']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Number of Tested Units with Detected Dangerous Mold</th>\
+                        <td>' + (feature.properties['Number of Tested Units with Detections'] !== null ? autolinker.link(String(feature.properties['Number of Tested Units with Detections']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_NumberofUnitswithDangerousDetections_2_0(feature) {
+            if (feature.properties['Number of Tested Units with Detections'] >= 0.000000 && feature.properties['Number of Tested Units with Detections'] <= 0.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,0.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(190,178,151,0.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 1.000000 && feature.properties['Number of Tested Units with Detections'] <= 4.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(255,255,204,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 4.000000 && feature.properties['Number of Tested Units with Detections'] <= 6.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(217,240,194,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 6.000000 && feature.properties['Number of Tested Units with Detections'] <= 8.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(180,225,185,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 8.000000 && feature.properties['Number of Tested Units with Detections'] <= 10.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(142,211,183,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 10.000000 && feature.properties['Number of Tested Units with Detections'] <= 12.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(103,196,190,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 12.000000 && feature.properties['Number of Tested Units with Detections'] <= 14.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(65,182,196,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 14.000000 && feature.properties['Number of Tested Units with Detections'] <= 16.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(57,160,191,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 16.000000 && feature.properties['Number of Tested Units with Detections'] <= 18.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(48,138,186,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 18.000000 && feature.properties['Number of Tested Units with Detections'] <= 20.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(43,112,177,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 20.000000 && feature.properties['Number of Tested Units with Detections'] <= 22.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(40,82,162,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Tested Units with Detections'] >= 22.000000 && feature.properties['Number of Tested Units with Detections'] <= 24.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitswithDangerousDetections_2',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(37,52,148,1.0)',
+                interactive: true,
+            }
+            }
+        }
+        map.createPane('pane_NumberofUnitswithDangerousDetections_2');
+        map.getPane('pane_NumberofUnitswithDangerousDetections_2').style.zIndex = 402;
+        map.getPane('pane_NumberofUnitswithDangerousDetections_2').style['mix-blend-mode'] = 'normal';
+        var layer_NumberofUnitswithDangerousDetections_2 = new L.geoJson(json_NumberofUnitswithDangerousDetections_2, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_NumberofUnitswithDangerousDetections_2',
+            layerName: 'layer_NumberofUnitswithDangerousDetections_2',
+            pane: 'pane_NumberofUnitswithDangerousDetections_2',
+            onEachFeature: pop_NumberofUnitswithDangerousDetections_2,
+            style: style_NumberofUnitswithDangerousDetections_2_0,
+        });
+        bounds_group.addLayer(layer_NumberofUnitswithDangerousDetections_2);
+        function pop_NumberofUnitsTested_3(feature, layer) {
+            layer.on({
+                mouseout: function(e) {
+                    for (var i in e.target._eventParents) {
+                        if (typeof e.target._eventParents[i].resetStyle === 'function') {
+                            e.target._eventParents[i].resetStyle(e.target);
+                        }
+                    }
+                    if (typeof layer.closePopup == 'function') {
+                        layer.closePopup();
+                    } else {
+                        layer.eachLayer(function(feature){
+                            feature.closePopup()
+                        });
+                    }
+                },
+                mouseover: highlightFeature,
+            });
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Number of Units Reporting Mold Contamination</th>\
+                        <td>' + (feature.properties['Number of Units Reporting Mold'] !== null ? autolinker.link(String(feature.properties['Number of Units Reporting Mold']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Number of Reported Units that have been Tested</th>\
+                        <td>' + (feature.properties['Number of Reported Units Tested'] !== null ? autolinker.link(String(feature.properties['Number of Reported Units Tested']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Number of Tested Units with Detected Dangerous Mold</th>\
+                        <td>' + (feature.properties['Number of Tested Units with Detections'] !== null ? autolinker.link(String(feature.properties['Number of Tested Units with Detections']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_NumberofUnitsTested_3_0(feature) {
+            if (feature.properties['Number of Reported Units Tested'] >= 0.000000 && feature.properties['Number of Reported Units Tested'] <= 0.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,0.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(190,178,151,0.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 1.000000 && feature.properties['Number of Reported Units Tested'] <= 4.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(255,255,204,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 4.000000 && feature.properties['Number of Reported Units Tested'] <= 6.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(217,240,194,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 6.000000 && feature.properties['Number of Reported Units Tested'] <= 8.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(180,225,185,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 8.000000 && feature.properties['Number of Reported Units Tested'] <= 10.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(142,211,183,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 10.000000 && feature.properties['Number of Reported Units Tested'] <= 12.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(103,196,190,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 12.000000 && feature.properties['Number of Reported Units Tested'] <= 14.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(65,182,196,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 14.000000 && feature.properties['Number of Reported Units Tested'] <= 16.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(57,160,191,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 16.000000 && feature.properties['Number of Reported Units Tested'] <= 18.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(48,138,186,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 18.000000 && feature.properties['Number of Reported Units Tested'] <= 20.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(43,112,177,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 20.000000 && feature.properties['Number of Reported Units Tested'] <= 22.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(40,82,162,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Reported Units Tested'] >= 22.000000 && feature.properties['Number of Reported Units Tested'] <= 24.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsTested_3',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(37,52,148,1.0)',
+                interactive: true,
+            }
+            }
+        }
+        map.createPane('pane_NumberofUnitsTested_3');
+        map.getPane('pane_NumberofUnitsTested_3').style.zIndex = 403;
+        map.getPane('pane_NumberofUnitsTested_3').style['mix-blend-mode'] = 'normal';
+        var layer_NumberofUnitsTested_3 = new L.geoJson(json_NumberofUnitsTested_3, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_NumberofUnitsTested_3',
+            layerName: 'layer_NumberofUnitsTested_3',
+            pane: 'pane_NumberofUnitsTested_3',
+            onEachFeature: pop_NumberofUnitsTested_3,
+            style: style_NumberofUnitsTested_3_0,
+        });
+        bounds_group.addLayer(layer_NumberofUnitsTested_3);
+        function pop_NumberofUnitsReportingMold_4(feature, layer) {
+            layer.on({
+                mouseout: function(e) {
+                    for (var i in e.target._eventParents) {
+                        if (typeof e.target._eventParents[i].resetStyle === 'function') {
+                            e.target._eventParents[i].resetStyle(e.target);
+                        }
+                    }
+                    if (typeof layer.closePopup == 'function') {
+                        layer.closePopup();
+                    } else {
+                        layer.eachLayer(function(feature){
+                            feature.closePopup()
+                        });
+                    }
+                },
+                mouseover: highlightFeature,
+            });
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Number of Units Reporting Mold Contamination</th>\
+                        <td>' + (feature.properties['Number of Units Reporting Mold'] !== null ? autolinker.link(String(feature.properties['Number of Units Reporting Mold']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Number of Reported Units that have been Tested</th>\
+                        <td>' + (feature.properties['Number of Reported Units Tested'] !== null ? autolinker.link(String(feature.properties['Number of Reported Units Tested']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Number of Tested Units with Detected Dangerous Mold</th>\
+                        <td>' + (feature.properties['Number of Tested Units with Detections'] !== null ? autolinker.link(String(feature.properties['Number of Tested Units with Detections']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_NumberofUnitsReportingMold_4_0(feature) {
+            if (feature.properties['Number of Units Reporting Mold'] >= 0.000000 && feature.properties['Number of Units Reporting Mold'] <= 0.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,0.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(190,178,151,0.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 1.000000 && feature.properties['Number of Units Reporting Mold'] <= 4.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(255,255,204,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 4.000000 && feature.properties['Number of Units Reporting Mold'] <= 6.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(217,240,194,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 6.000000 && feature.properties['Number of Units Reporting Mold'] <= 8.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(180,225,185,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 8.000000 && feature.properties['Number of Units Reporting Mold'] <= 10.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(142,211,183,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 10.000000 && feature.properties['Number of Units Reporting Mold'] <= 12.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(103,196,190,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 12.000000 && feature.properties['Number of Units Reporting Mold'] <= 14.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(65,182,196,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 14.000000 && feature.properties['Number of Units Reporting Mold'] <= 16.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(57,160,191,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 16.000000 && feature.properties['Number of Units Reporting Mold'] <= 18.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(48,138,186,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 18.000000 && feature.properties['Number of Units Reporting Mold'] <= 20.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(43,112,177,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 20.000000 && feature.properties['Number of Units Reporting Mold'] <= 22.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(40,82,162,1.0)',
+                interactive: true,
+            }
+            }
+            if (feature.properties['Number of Units Reporting Mold'] >= 22.000000 && feature.properties['Number of Units Reporting Mold'] <= 24.000000 ) {
+                return {
+                pane: 'pane_NumberofUnitsReportingMold_4',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(37,52,148,1.0)',
+                interactive: true,
+            }
+            }
+        }
+        map.createPane('pane_NumberofUnitsReportingMold_4');
+        map.getPane('pane_NumberofUnitsReportingMold_4').style.zIndex = 404;
+        map.getPane('pane_NumberofUnitsReportingMold_4').style['mix-blend-mode'] = 'normal';
+        var layer_NumberofUnitsReportingMold_4 = new L.geoJson(json_NumberofUnitsReportingMold_4, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_NumberofUnitsReportingMold_4',
+            layerName: 'layer_NumberofUnitsReportingMold_4',
+            pane: 'pane_NumberofUnitsReportingMold_4',
+            onEachFeature: pop_NumberofUnitsReportingMold_4,
+            style: style_NumberofUnitsReportingMold_4_0,
+        });
+        bounds_group.addLayer(layer_NumberofUnitsReportingMold_4);
+        map.addLayer(layer_NumberofUnitsReportingMold_4);
+        function pop_mappinginequality_5(feature, layer) {
+            layer.on({
+                mouseout: function(e) {
+                    for (var i in e.target._eventParents) {
+                        if (typeof e.target._eventParents[i].resetStyle === 'function') {
+                            e.target._eventParents[i].resetStyle(e.target);
+                        }
+                    }
+                    if (typeof layer.closePopup == 'function') {
+                        layer.closePopup();
+                    } else {
+                        layer.eachLayer(function(feature){
+                            feature.closePopup()
+                        });
+                    }
+                },
+                mouseover: highlightFeature,
+            });
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">category</th>\
+                        <td>' + (feature.properties['category'] !== null ? autolinker.link(String(feature.properties['category']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">grade</th>\
+                        <td>' + (feature.properties['grade'] !== null ? autolinker.link(String(feature.properties['grade']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">label</th>\
+                        <td>' + (feature.properties['label'] !== null ? autolinker.link(String(feature.properties['label']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_mappinginequality_5_0(feature) {
+            switch(String(feature.properties['grade'])) {
+                case 'A':
+                    return {
+                pane: 'pane_mappinginequality_5',
+                opacity: 1,
+                color: 'rgba(118,193,71,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(118,193,71,0.6)',
+                interactive: false,
+            }
+                    break;
+                case 'B':
+                    return {
+                pane: 'pane_mappinginequality_5',
+                opacity: 1,
+                color: 'rgba(236,201,28,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(236,201,28,0.6)',
+                interactive: false,
+            }
+                    break;
+                case 'C':
+                    return {
+                pane: 'pane_mappinginequality_5',
+                opacity: 1,
+                color: 'rgba(246,131,58,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(246,131,58,0.6)',
+                interactive: false,
+            }
+                    break;
+                case 'D':
+                    return {
+                pane: 'pane_mappinginequality_5',
+                opacity: 1,
+                color: 'rgba(202,60,60,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(202,60,60,0.6)',
+                interactive: false,
+            }
+                    break;
+                default:
+                    return {
+                pane: 'pane_mappinginequality_5',
+                opacity: 0,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1.0, 
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(208,208,208,0)',
+                interactive: false,
+            }
+                    break;
+            }
+        }
+        map.createPane('pane_mappinginequality_5');
+        map.getPane('pane_mappinginequality_5').style.zIndex = 405;
+        map.getPane('pane_mappinginequality_5').style['mix-blend-mode'] = 'normal';
+        var layer_mappinginequality_5 = new L.geoJson(json_mappinginequality_5, {
+            attribution: '',
+            interactive: false,
+            dataVar: 'json_mappinginequality_5',
+            layerName: 'layer_mappinginequality_5',
+            pane: 'pane_mappinginequality_5',
+            onEachFeature: pop_mappinginequality_5,
+            style: style_mappinginequality_5_0,
+        });
+        bounds_group.addLayer(layer_mappinginequality_5);
+        function pop_MoldContaminationCaseStudies_6(feature, layer) {
+            layer.on({
+                mouseout: function(e) {
+                    for (var i in e.target._eventParents) {
+                        if (typeof e.target._eventParents[i].resetStyle === 'function') {
+                            e.target._eventParents[i].resetStyle(e.target);
+                        }
+                    }
+                    if (typeof layer.closePopup == 'function') {
+                        layer.closePopup();
+                    } else {
+                        layer.eachLayer(function(feature){
+                            feature.closePopup()
+                        });
+                    }
+                },
+                mouseover: highlightFeature,
+            });
+            var popupContent = '<table>\
+                    <tr>\
+                        <td colspan="2">' + (feature.properties['Name'] !== null ? autolinker.link(String(feature.properties['Name']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <td colspan="2">' + (feature.properties['Address'] !== null ? autolinker.link(String(feature.properties['Address']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <td colspan="2">' + (feature.properties['Description'] !== null ? autolinker.link(String(feature.properties['Description']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_MoldContaminationCaseStudies_6_0() {
+            return {
+                pane: 'pane_MoldContaminationCaseStudies_6',
+                shape: 'diamond',
+                radius: 8.8,
+                opacity: 1,
+                color: 'rgba(255,255,255,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(219,30,42,1.0)',
+                interactive: true,
+            }
+        }
+        map.createPane('pane_MoldContaminationCaseStudies_6');
+        map.getPane('pane_MoldContaminationCaseStudies_6').style.zIndex = 406;
+        map.getPane('pane_MoldContaminationCaseStudies_6').style['mix-blend-mode'] = 'normal';
+        var layer_MoldContaminationCaseStudies_6 = new L.geoJson(json_MoldContaminationCaseStudies_6, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_MoldContaminationCaseStudies_6',
+            layerName: 'layer_MoldContaminationCaseStudies_6',
+            pane: 'pane_MoldContaminationCaseStudies_6',
+            onEachFeature: pop_MoldContaminationCaseStudies_6,
+            pointToLayer: function (feature, latlng) {
+                var context = {
+                    feature: feature,
+                    variables: {}
+                };
+                return L.shapeMarker(latlng, style_MoldContaminationCaseStudies_6_0(feature));
+            },
+        });
+        bounds_group.addLayer(layer_MoldContaminationCaseStudies_6);
+        map.addLayer(layer_MoldContaminationCaseStudies_6);
+
+        var overlaysTree = [
+            {label: '<img src="legend/MoldContaminationCaseStudies_6.png" /> Mold Contamination: Case Studies', layer: layer_MoldContaminationCaseStudies_6},
+            {label: 'mappinginequality<br /><table><tr><td style="text-align: center;"><img src="legend/mappinginequality_5_A0.png" /></td><td>A</td></tr><tr><td style="text-align: center;"><img src="legend/mappinginequality_5_B1.png" /></td><td>B</td></tr><tr><td style="text-align: center;"><img src="legend/mappinginequality_5_C2.png" /></td><td>C</td></tr><tr><td style="text-align: center;"><img src="legend/mappinginequality_5_D3.png" /></td><td>D</td></tr><tr><td style="text-align: center;"><img src="legend/mappinginequality_5_4.png" /></td><td></td></tr></table>', layer: layer_mappinginequality_5},
+            {label: '<b>Mold Statistics</b>',  selectAllCheckbox: false, children: [
+            {label: '<b>Number of Units Reporting Mold</b><br /><img src="legend/num_reported_colorRamp.png" width=200>', layer: layer_NumberofUnitsReportingMold_4},
+            {label: '<b>Number of Reported Units Tested</b><br /><img src="legend/num_tested_colorRamp.png" width=200>', layer: layer_NumberofUnitsTested_3},
+            {label: '<b>Number of Units with Dangerous Mold Detection</b><br /><img src="legend/num_dangerous_colorRamp.png" width=200>', layer: layer_NumberofUnitswithDangerousDetections_2,},]},]
+        var lay = L.control.layers.tree(null, overlaysTree,{
+            //namedToggle: true,
+            //selectorBack: false,
+            //closedSymbol: '&#8862; &#x1f5c0;',
+            //openedSymbol: '&#8863; &#x1f5c1;',
+            //collapseAll: 'Collapse all',
+            //expandAll: 'Expand all',
+            collapsed: false, 
+        });
+        lay.addTo(map);
+		document.addEventListener("DOMContentLoaded", function() {
+            // set new Layers List height which considers toggle icon
+            function newLayersListHeight() {
+                var layerScrollbarElement = document.querySelector('.leaflet-control-layers-scrollbar');
+                if (layerScrollbarElement) {
+                    var layersListElement = document.querySelector('.leaflet-control-layers-list');
+                    var originalHeight = layersListElement.style.height 
+                        || window.getComputedStyle(layersListElement).height;
+                    var newHeight = parseFloat(originalHeight) - 50;
+                    layersListElement.style.height = newHeight + 'px';
+                }
+            }
+            var isLayersListExpanded = true;
+            var controlLayersElement = document.querySelector('.leaflet-control-layers');
+            var toggleLayerControl = document.querySelector('.leaflet-control-layers-toggle');
+            // toggle Collapsed/Expanded and apply new Layers List height
+            toggleLayerControl.addEventListener('click', function() {
+                if (isLayersListExpanded) {
+                    controlLayersElement.classList.remove('leaflet-control-layers-expanded');
+                } else {
+                    controlLayersElement.classList.add('leaflet-control-layers-expanded');
+                }
+                isLayersListExpanded = !isLayersListExpanded;
+                newLayersListHeight()
+            });	
+			// apply new Layers List height if toggle layerstree
+			if (controlLayersElement) {
+				controlLayersElement.addEventListener('click', function(event) {
+					var toggleLayerHeaderPointer = event.target.closest('.leaflet-layerstree-header-pointer span');
+					if (toggleLayerHeaderPointer) {
+						newLayersListHeight();
+					}
+				});
+			}
+            // Collapsed/Expanded at Start to apply new height
+            setTimeout(function() {
+                toggleLayerControl.click();
+            }, 10);
+            setTimeout(function() {
+                toggleLayerControl.click();
+            }, 10);
+            // Collapsed touch/small screen
+            var isSmallScreen = window.innerWidth < 650;
+            if (isSmallScreen) {
+                setTimeout(function() {
+                    controlLayersElement.classList.remove('leaflet-control-layers-expanded');
+                    isLayersListExpanded = !isLayersListExpanded;
+                }, 500);
+            }  
+        });       
+        setBounds();
+        </script>        
+    </body>
+</html>
